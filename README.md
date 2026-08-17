@@ -31,6 +31,14 @@ This separates the Bitcoin Origins blockchain completely from the Bitcoin networ
 
 Bitcoin Origins uses a peer-to-peer network where nodes can connect to each other and synchronize the blockchain.
 
+The default network port used by Bitcoin Origins is:
+
+```text
+17474
+```
+
+Make sure TCP port `17474` is allowed through your firewall and properly forwarded if you want your node to accept incoming connections from the public network.
+
 Public bootstrap nodes may be provided so that new installations can discover peers and download the blockchain.
 
 ## Mining
