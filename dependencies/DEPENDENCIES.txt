@@ -1,0 +1,10 @@
+Bitcoin Origins Dependencies
+
+Required dependencies:
+
+- Boost 1.35.0
+- Berkeley DB 4.7.25
+- wxWidgets 2.8.9
+- OpenSSL 0.9.8h
+
+These versions are used by Bitcoin Origins and are recommended when building the project from source.
