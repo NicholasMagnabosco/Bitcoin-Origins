@@ -84,3 +84,11 @@ See the `LICENSE` file for details.
 Bitcoin Origins is an independent experimental project created for educational and research purposes.
 
 It is not affiliated with, endorsed by, or officially connected to Bitcoin, Bitcoin Core, or their developers.
+
+## Support
+
+If you'd like to support the project:
+
+**Bitcoin:** `bc1q80t69h70p05d8exv0rmzm4maru84tweh6n3l49`
+
+Thank you! ❤️
