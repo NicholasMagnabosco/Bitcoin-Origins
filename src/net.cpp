@@ -36,6 +36,7 @@ map<CInv, int64> mapAlreadyAskedFor;
 
 
 CAddress addrProxy;
+string strConnectNode = "";
 
 bool ConnectSocket(const CAddress& addrConnect, SOCKET& hSocketRet)
 {
@@ -673,6 +674,50 @@ void ThreadOpenConnections(void* parg)
 void ThreadOpenConnections2(void* parg)
 {
     printf("ThreadOpenConnections started\n");
+	
+//
+// Bitcoin Origins: manual -connect peer
+//
+if (!strConnectNode.empty())
+{
+    CAddress addrConnect(
+        strConnectNode.c_str(),
+        nLocalServices
+    );
+
+    while (!fShutdown)
+    {
+        if (!FindNode(addrConnect.ip))
+        {
+            printf(
+                "Bitcoin Origins: trying manual peer %s\n",
+                strConnectNode.c_str()
+            );
+
+            CNode* pnode = ConnectNode(addrConnect);
+
+            if (pnode)
+            {
+                pnode->fNetworkNode = true;
+
+                printf(
+                    "Bitcoin Origins: connected to manual peer %s\n",
+                    strConnectNode.c_str()
+                );
+
+                pnode->PushMessage("getaddr");
+            }
+        }
+
+        vfThreadRunning[1] = false;
+        Sleep(5000);
+        vfThreadRunning[1] = true;
+
+        CheckForShutdown(1);
+    }
+
+    return;
+}
 
     // Initiate network connections
     const int nMaxConnections = 15;
@@ -869,9 +914,413 @@ void ThreadBitcoinMiner(void* parg)
 }
 
 
+static void ClearExternalMiningJob(CMiningJob& job)
+{
+    if (job.pblock)
+    {
+        delete job.pblock;
+        job.pblock = NULL;
+    }
+
+    job.pindexPrev = NULL;
+    job.hashTarget = 0;
+    job.nJobID = 0;
+}
 
 
+void ThreadExternalMiner(void* parg)
+{
+    vfThreadRunning[4] = true;
 
+    SOCKET hListenSocket = INVALID_SOCKET;
+    SOCKET hClientSocket = INVALID_SOCKET;
+
+    try
+    {
+        hListenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+        if (hListenSocket == INVALID_SOCKET)
+        {
+            printf("External miner: socket() failed: %d\n", WSAGetLastError());
+            vfThreadRunning[4] = false;
+            return;
+        }
+
+        sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        addr.sin_port = htons(MINER_PORT);
+
+        if (bind(
+                hListenSocket,
+                (sockaddr*)&addr,
+                sizeof(addr)) == SOCKET_ERROR)
+        {
+            printf(
+                "External miner: bind() failed on 127.0.0.1:%u: %d\n",
+                MINER_PORT,
+                WSAGetLastError()
+            );
+
+            closesocket(hListenSocket);
+            vfThreadRunning[4] = false;
+            return;
+        }
+
+        if (listen(hListenSocket, 1) == SOCKET_ERROR)
+        {
+            printf(
+                "External miner: listen() failed: %d\n",
+                WSAGetLastError()
+            );
+
+            closesocket(hListenSocket);
+            vfThreadRunning[4] = false;
+            return;
+        }
+
+        printf(
+            "External miner server listening on 127.0.0.1:%u\n",
+            MINER_PORT
+        );
+
+        while (!fShutdown)
+        {
+            fd_set fdset;
+            FD_ZERO(&fdset);
+            FD_SET(hListenSocket, &fdset);
+
+            timeval timeout;
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+
+            int nSelect = select(
+                0,
+                &fdset,
+                NULL,
+                NULL,
+                &timeout
+            );
+
+            if (fShutdown)
+                break;
+
+            if (nSelect == SOCKET_ERROR)
+            {
+                printf(
+                    "External miner: select() failed: %d\n",
+                    WSAGetLastError()
+                );
+                break;
+            }
+
+            if (nSelect == 0)
+                continue;
+
+            hClientSocket = accept(
+                hListenSocket,
+                NULL,
+                NULL
+            );
+
+            if (hClientSocket == INVALID_SOCKET)
+                continue;
+
+            printf("External miner connected\n");
+
+            CMiningJob job;
+            bool fHaveJob = false;
+
+            string strBuffer;
+
+            while (!fShutdown)
+            {
+                char buffer[1024];
+
+                int nBytes = recv(
+                    hClientSocket,
+                    buffer,
+                    sizeof(buffer) - 1,
+                    0
+                );
+
+                if (nBytes <= 0)
+                    break;
+
+                buffer[nBytes] = 0;
+                strBuffer += buffer;
+
+                size_t nPos;
+
+                while ((nPos = strBuffer.find('\n')) != string::npos)
+                {
+                    string strCommand =
+                        strBuffer.substr(0, nPos);
+
+                    strBuffer.erase(0, nPos + 1);
+
+                    if (!strCommand.empty() &&
+                        strCommand[strCommand.size() - 1] == '\r')
+                    {
+                        strCommand.erase(
+                            strCommand.size() - 1
+                        );
+                    }
+
+                    //
+                    // GETWORK
+                    //
+                    if (strCommand == "GETWORK")
+                    {
+                        if (fHaveJob)
+                    {
+                        ClearExternalMiningJob(job);
+                        fHaveJob = false;
+                    }
+
+                        if (!CreateMiningJob(job))
+                        {
+                            const char* psz =
+                                "ERROR CREATEWORK\n";
+
+                            send(
+                                hClientSocket,
+                                psz,
+                                strlen(psz),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        fHaveJob = true;
+
+                        string strReply = strprintf(
+                            "WORK %u %d %s %s %u %08x %s %d\n",
+                            job.nJobID,
+                            job.pblock->nVersion,
+                            job.pblock->hashPrevBlock.GetHex().c_str(),
+                            job.pblock->hashMerkleRoot.GetHex().c_str(),
+                            job.pblock->nTime,
+                            job.pblock->nBits,
+                            job.hashTarget.GetHex().c_str(),
+                            nBestHeight + 1
+                        );
+
+                        send(
+                            hClientSocket,
+                            strReply.c_str(),
+                            strReply.size(),
+                            0
+                        );
+
+                        printf(
+                            "External miner: sent job %u for block %d\n",
+                            job.nJobID,
+                            nBestHeight + 1
+                        );
+                    }
+                    
+					else if (strCommand.substr(0, 9) == "CHECKJOB ")
+{
+    unsigned int nJobID = 0;
+
+    if (sscanf(
+            strCommand.c_str(),
+            "CHECKJOB %u",
+            &nJobID) != 1)
+    {
+        const char* psz =
+            "ERROR BADFORMAT\n";
+
+        send(
+            hClientSocket,
+            psz,
+            strlen(psz),
+            0
+        );
+
+        continue;
+    }
+
+    if (!fHaveJob ||
+        nJobID != job.nJobID ||
+        job.pindexPrev != pindexBest)
+    {
+        const char* psz =
+            "STALE\n";
+
+        send(
+            hClientSocket,
+            psz,
+            strlen(psz),
+            0
+        );
+
+        continue;
+    }
+
+    const char* psz =
+        "ACTIVE\n";
+
+    send(
+        hClientSocket,
+        psz,
+        strlen(psz),
+        0
+    );
+}
+					
+                    //
+                    // SUBMIT <jobid> <nonce>
+                    //
+                    else if (strCommand.substr(0, 7) == "SUBMIT ")
+                    {
+                        unsigned int nJobID = 0;
+                        unsigned int nNonce = 0;
+
+                        if (sscanf(
+                                strCommand.c_str(),
+                                "SUBMIT %u %u",
+                                &nJobID,
+                                &nNonce) != 2)
+                        {
+                            const char* psz =
+                                "REJECTED BADFORMAT\n";
+
+                            send(
+                                hClientSocket,
+                                psz,
+                                strlen(psz),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        if (!fHaveJob ||
+                            nJobID != job.nJobID)
+                        {
+                            const char* psz =
+                                "STALE\n";
+
+                            send(
+                                hClientSocket,
+                                psz,
+                                strlen(psz),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        if (job.pindexPrev != pindexBest)
+                        {
+                            ClearExternalMiningJob(job);
+                            fHaveJob = false;
+
+                            const char* psz =
+                                "STALE\n";
+
+                            send(
+                                hClientSocket,
+                                psz,
+                                strlen(psz),
+                                0
+                            );
+
+                            continue;
+                        }
+
+                        job.pblock->nNonce = nNonce;
+
+uint256 nodeHash = job.pblock->GetHash();
+
+if (nodeHash > job.hashTarget)
+{
+    string strReply = strprintf(
+        "REJECTED POW %s\n",
+        nodeHash.GetHex().c_str()
+    );
+
+    send(
+        hClientSocket,
+        strReply.c_str(),
+        strReply.size(),
+        0
+    );
+
+    continue;
+}
+
+if (SubmitMiningJob(job, nNonce))
+{
+    const char* psz =
+        "ACCEPTED\n";
+
+    send(
+        hClientSocket,
+        psz,
+        strlen(psz),
+        0
+    );
+
+    fHaveJob = false;
+}
+else
+{
+    const char* psz =
+        "REJECTED BLOCK\n";
+
+    send(
+        hClientSocket,
+        psz,
+        strlen(psz),
+        0
+    );
+}
+
+}
+
+                    else
+                    {
+                        const char* psz =
+                            "ERROR UNKNOWNCOMMAND\n";
+
+                        send(
+                            hClientSocket,
+                            psz,
+                            strlen(psz),
+                            0
+                        );
+                    }
+                }
+            }
+
+            if (fHaveJob && job.pblock)
+            {
+                delete job.pblock;
+                job.pblock = NULL;
+            }
+
+            closesocket(hClientSocket);
+            hClientSocket = INVALID_SOCKET;
+
+            printf("External miner disconnected\n");
+        }
+    }
+    CATCH_PRINT_EXCEPTION("ThreadExternalMiner()")
+
+    if (hClientSocket != INVALID_SOCKET)
+        closesocket(hClientSocket);
+
+    if (hListenSocket != INVALID_SOCKET)
+        closesocket(hListenSocket);
+
+    vfThreadRunning[4] = false;
+}
 
 
 
@@ -881,6 +1330,39 @@ void ThreadBitcoinMiner(void* parg)
 bool StartNode(string& strError)
 {
     strError = "";
+	
+//
+// Bitcoin Origins: manual peer connection
+// Usage: bitcoin-origins.exe -connect=192.168.1.50:17474
+//
+const char* pszCommandLine = GetCommandLineA();
+const char* pszConnect = strstr(pszCommandLine, "-connect=");
+
+if (pszConnect)
+{
+    pszConnect += strlen("-connect=");
+
+    string strNode;
+
+    while (*pszConnect &&
+           *pszConnect != ' ' &&
+           *pszConnect != '\t' &&
+           *pszConnect != '"')
+    {
+        strNode += *pszConnect;
+        pszConnect++;
+    }
+
+    if (!strNode.empty())
+    {
+        strConnectNode = strNode;
+
+        printf(
+            "Bitcoin Origins: manual connect node = %s\n",
+            strConnectNode.c_str()
+        );
+    }
+}
 
     // Sockets startup
     WSADATA wsadata;
@@ -992,6 +1474,14 @@ if (_beginthread(ThreadIRCSeed, 0, NULL) == -1)
     if (_beginthread(ThreadMessageHandler, 0, NULL) == -1)
     {
         strError = "Error: _beginthread(ThreadMessageHandler) failed";
+        printf("%s\n", strError.c_str());
+        return false;
+    }
+	
+	// Bitcoin Origins External Miner server
+    if (_beginthread(ThreadExternalMiner, 0, NULL) == -1)
+    {
+        strError = "Error: _beginthread(ThreadExternalMiner) failed";
         printf("%s\n", strError.c_str());
         return false;
     }

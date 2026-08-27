@@ -1238,9 +1238,30 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
     // Check for duplicate
     uint256 hash = pblock->GetHash();
     if (mapBlockIndex.count(hash))
-        return error("ProcessBlock() : already have block %d %s", mapBlockIndex[hash]->nHeight, hash.ToString().substr(0,14).c_str());
+    {
+        int nHeight = mapBlockIndex[hash]->nHeight;
+        string strHash = hash.ToString().substr(0,14);
+
+        delete pblock;
+
+        return error(
+            "ProcessBlock() : already have block %d %s",
+            nHeight,
+            strHash.c_str()
+        );
+    }
+
     if (mapOrphanBlocks.count(hash))
-        return error("ProcessBlock() : already have block (orphan) %s", hash.ToString().substr(0,14).c_str());
+    {
+        string strHash = hash.ToString().substr(0,14);
+
+        delete pblock;
+
+        return error(
+            "ProcessBlock() : already have block (orphan) %s",
+            strHash.c_str()
+        );
+    }
 
     // Preliminary checks
     if (!pblock->CheckBlock())
@@ -1691,7 +1712,7 @@ bool ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
 {
     static map<unsigned int, vector<unsigned char> > mapReuseKey;
     printf("received: %-12s (%d bytes)  ", strCommand.c_str(), vRecv.size());
-    for (int i = 0; i < min(vRecv.size(), (unsigned int)25); i++)
+    for (int i = 0; i < (int)std::min<CDataStream::size_type>(vRecv.size(), 25); i++)
         printf("%02x ", vRecv[i] & 0xff);
     printf("\n");
     if (nDropMessagesTest > 0 && GetRand(nDropMessagesTest) == 0)
@@ -2179,6 +2200,176 @@ void BlockSHA256(const void* pin, unsigned int nBlocks, void* pout)
     }
 }
 
+bool CreateMiningJob(CMiningJob& job)
+{
+    static unsigned int nNextJobID = 1;
+    static CBigNum bnExtraNonce = 0;
+
+    CBlockIndex* pindexPrev = pindexBest;
+    unsigned int nBits = GetNextWorkRequired(pindexPrev);
+
+    //
+    // Create coinbase transaction
+    //
+    CTransaction txNew;
+    txNew.vin.resize(1);
+    txNew.vin[0].prevout.SetNull();
+    txNew.vin[0].scriptSig << nBits << ++bnExtraNonce;
+
+    job.key.MakeNewKey();
+
+    txNew.vout.resize(1);
+    txNew.vout[0].scriptPubKey
+        << job.key.GetPubKey()
+        << OP_CHECKSIG;
+
+    //
+    // Create block
+    //
+    CBlock* pblock = new CBlock();
+
+    if (!pblock)
+        return false;
+
+    pblock->vtx.push_back(txNew);
+
+    int64 nFees = 0;
+
+    CRITICAL_BLOCK(cs_main)
+    CRITICAL_BLOCK(cs_mapTransactions)
+    {
+        CTxDB txdb("r");
+
+        map<uint256, CTxIndex> mapTestPool;
+        vector<char> vfAlreadyAdded(mapTransactions.size());
+
+        bool fFoundSomething = true;
+        unsigned int nBlockSize = 0;
+
+        while (fFoundSomething && nBlockSize < MAX_SIZE / 2)
+        {
+            fFoundSomething = false;
+            unsigned int n = 0;
+
+            for (map<uint256, CTransaction>::iterator mi = mapTransactions.begin();
+                 mi != mapTransactions.end();
+                 ++mi, ++n)
+            {
+                if (vfAlreadyAdded[n])
+                    continue;
+
+                CTransaction& tx = (*mi).second;
+
+                if (tx.IsCoinBase() || !tx.IsFinal())
+                    continue;
+
+                int64 nMinFee = tx.GetMinFee(pblock->vtx.size() < 100);
+
+                map<uint256, CTxIndex> mapTestPoolTmp(mapTestPool);
+
+                if (!tx.ConnectInputs(
+                        txdb,
+                        mapTestPoolTmp,
+                        CDiskTxPos(1,1,1),
+                        0,
+                        nFees,
+                        false,
+                        true,
+                        nMinFee))
+                    continue;
+
+                swap(mapTestPool, mapTestPoolTmp);
+
+                pblock->vtx.push_back(tx);
+                nBlockSize += ::GetSerializeSize(tx, SER_NETWORK);
+
+                vfAlreadyAdded[n] = true;
+                fFoundSomething = true;
+            }
+        }
+    }
+
+pblock->nVersion = 1;
+pblock->hashPrevBlock =
+    (pindexPrev ? pindexPrev->GetBlockHash() : 0);
+
+// IMPORTANT:
+// Set the coinbase reward BEFORE calculating the Merkle Root.
+pblock->vtx[0].vout[0].nValue =
+    pblock->GetBlockValue(nFees);
+
+pblock->hashMerkleRoot = pblock->BuildMerkleTree();
+
+pblock->nTime =
+    max(
+        (pindexPrev ? pindexPrev->GetMedianTimePast() + 1 : 0),
+        GetAdjustedTime()
+    );
+
+pblock->nBits = nBits;
+pblock->nNonce = 0;
+
+    job.nJobID = nNextJobID++;
+    job.pblock = pblock;
+    job.pindexPrev = pindexPrev;
+    job.hashTarget =
+        CBigNum().SetCompact(nBits).getuint256();
+
+    return true;
+}
+
+bool SubmitMiningJob(CMiningJob& job, unsigned int nNonce)
+{
+    if (!job.pblock)
+        return false;
+
+    // Check whether this work is already stale
+    if (job.pindexPrev != pindexBest)
+    {
+        printf("External miner: stale job %u\n", job.nJobID);
+        return false;
+    }
+
+    job.pblock->nNonce = nNonce;
+
+    uint256 hash = job.pblock->GetHash();
+
+    // Verify proof-of-work ourselves
+    if (hash > job.hashTarget)
+    {
+        printf("External miner: invalid nonce for job %u\n", job.nJobID);
+        return false;
+    }
+
+    printf("External miner: proof-of-work found\n");
+    printf("  job   : %u\n", job.nJobID);
+    printf("  nonce : %u\n", nNonce);
+    printf("  hash  : %s\n", hash.GetHex().c_str());
+
+    CRITICAL_BLOCK(cs_main)
+    {
+        // Save the key receiving the coinbase reward
+        if (!AddKey(job.key))
+        {
+            printf("External miner: AddKey failed\n");
+            return false;
+        }
+
+        CBlock* pblock = job.pblock;
+
+        // ProcessBlock now owns this pointer
+        job.pblock = NULL;
+
+        // Let Bitcoin Origins validate and accept the block normally
+        if (!ProcessBlock(NULL, pblock))
+    {
+        printf("External miner: block rejected by ProcessBlock\n");
+        return false;
+    }
+}
+
+    return true;
+}
 
 bool BitcoinMiner()
 {

@@ -59,6 +59,34 @@ void RelayWalletTransactions();
 bool LoadBlockIndex(bool fAllowNew=true);
 void PrintBlockTree();
 bool BitcoinMiner();
+
+//
+// Bitcoin Origins External Miner
+//
+
+class CBlock;
+class CBlockIndex;
+
+struct CMiningJob
+{
+    unsigned int nJobID;
+    CBlock* pblock;
+    CBlockIndex* pindexPrev;
+    uint256 hashTarget;
+    CKey key;
+
+    CMiningJob()
+    {
+        nJobID = 0;
+        pblock = NULL;
+        pindexPrev = NULL;
+        hashTarget = 0;
+    }
+};
+
+bool CreateMiningJob(CMiningJob& job);
+bool SubmitMiningJob(CMiningJob& job, unsigned int nNonce);
+
 bool ProcessMessages(CNode* pfrom);
 bool ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv);
 bool SendMessages(CNode* pto);
