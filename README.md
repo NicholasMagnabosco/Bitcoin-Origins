@@ -16,10 +16,13 @@ The project explores concepts such as:
 * Block validation
 * Transactions
 * Nodes
+* Mining job handling
 * The Genesis Block
 * Bitcoin's original architecture
+* External CPU mining
+* Mining job distribution and stale-work detection
 
-Bitcoin Origins is **not Bitcoin** and is not affiliated with the Bitcoin Core project.
+Bitcoin Origins is **NOT Bitcoin** and is not affiliated with the Bitcoin Core project.
 
 ## Genesis Block
 
@@ -29,17 +32,29 @@ This separates the Bitcoin Origins blockchain completely from the Bitcoin networ
 
 ## Network
 
-Bitcoin Origins uses a peer-to-peer network where nodes can connect to each other and synchronize the blockchain.
+Bitcoin Origins uses a peer-to-peer network where nodes can connect to each other, synchronize the blockchain, and propagate newly mined blocks.
 
-The default network port used by Bitcoin Origins is:
+The default P2P port used by Bitcoin Origins is:
 
 ```text
 17474
 ```
 
+Nodes can currently be connected manually using:
+
+```text
+bitcoin-origins.exe -connect=<ip>:17474
+```
+
+Example:
+
+```text
+bitcoin-origins.exe -connect=192.168.1.50:17474
+```
+
 Make sure TCP port `17474` is allowed through your firewall and properly forwarded if you want your node to accept incoming connections from the public network.
 
-Public bootstrap nodes may be provided so that new installations can discover peers and download the blockchain.
+Peer discovery and public bootstrap infrastructure are still under development, so manual peer connections may currently be required.
 
 ## Mining
 
@@ -47,11 +62,50 @@ Bitcoin Origins uses Proof-of-Work mining inspired by the original Bitcoin imple
 
 Mining secures the network and allows new blocks to be added to the blockchain.
 
+### External CPU Miner
+
+Bitcoin Origins includes a separate **external CPU miner**.
+
+The miner connects locally to the Bitcoin Origins node through:
+
+```text
+127.0.0.1:17475
+```
+
+The external miner:
+
+* Uses multi-threaded CPU mining
+* Uses all available logical CPU threads
+* Supports multi-processor systems
+* Uses SHA-256 midstate optimization
+* Receives mining jobs directly from the node
+* Submits valid blocks back to the node
+* Detects stale mining work automatically
+* Requests new work when another node finds a block
+
+The miner has been successfully tested on a dual-CPU system using 24 logical threads.
+
+When another node finds and propagates a new block, the miner detects that its current job is stale and automatically requests updated work.
+
+## Tested Features
+
+The following functionality has been tested between independent Bitcoin Origins nodes:
+
+* Direct P2P connection
+* Blockchain synchronization
+* Block propagation
+* External CPU mining
+* Multi-threaded mining
+* Dual-CPU / multi-processor mining
+* Mining job submission
+* Automatic stale-work detection
+* Automatic mining job refresh after a new block
+
 ## Status
 
 > ⚠️ Bitcoin Origins is currently experimental software and under active development.
 
-The protocol, network configuration, blockchain format, and other components may change during development.
+The protocol, network configuration, blockchain format, mining protocol, and other components may change during development.
 
 Do not use Bitcoin Origins for storing anything of real monetary value.
 
@@ -62,8 +116,10 @@ Build instructions will be added as the project develops.
 The primary development target is currently:
 
 * Windows
-* x86 / x64
+* x86
 * C++
+
+Some components and dependencies are based on historical software versions in order to remain close to the original Bitcoin 0.1 architecture.
 
 ## Contributing
 
