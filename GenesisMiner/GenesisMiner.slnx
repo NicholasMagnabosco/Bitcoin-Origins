@@ -1,7 +1,0 @@
-<Solution>
-  <Configurations>
-    <Platform Name="x64" />
-    <Platform Name="x86" />
-  </Configurations>
-  <Project Path="GenesisMiner/GenesisMiner.vcxproj" Id="5de39d43-36fc-481e-a382-5b2081834ff5" />
-</Solution>
