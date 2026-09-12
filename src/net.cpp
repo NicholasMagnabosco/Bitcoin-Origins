@@ -675,6 +675,9 @@ void ThreadOpenConnections2(void* parg)
 {
     printf("ThreadOpenConnections started\n");
 	
+if (strConnectNode.empty())
+    strConnectNode = "129.152.5.185:17474";
+	
 //
 // Bitcoin Origins: manual -connect peer
 //
@@ -718,6 +721,7 @@ if (!strConnectNode.empty())
 
     return;
 }
+
 
     // Initiate network connections
     const int nMaxConnections = 15;
