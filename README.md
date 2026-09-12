@@ -24,6 +24,10 @@ The project explores concepts such as:
 
 Bitcoin Origins is **NOT Bitcoin** and is not affiliated with the Bitcoin Core project.
 
+## Current Release
+
+**Bitcoin Origins 0.1.3** introduces the first working public network setup for the project, including automatic connection to the public bootstrap node and the first Linux headless full node.
+
 ## Genesis Block
 
 Bitcoin Origins uses its own independently generated Genesis Block.
@@ -40,21 +44,31 @@ The default P2P port used by Bitcoin Origins is:
 17474
 ```
 
-Nodes can currently be connected manually using:
+### Public Bootstrap Node
+
+Bitcoin Origins now has a public always-on bootstrap node:
+
+```text
+129.152.5.185:17474
+```
+
+Starting with **v0.1.3**, clients automatically attempt to connect to the public bootstrap node at startup.
+
+A manual peer can still be specified with:
 
 ```text
 bitcoin-origins.exe -connect=<ip>:17474
 ```
 
-Example:
+For example:
 
 ```text
 bitcoin-origins.exe -connect=192.168.1.50:17474
 ```
 
-Make sure TCP port `17474` is allowed through your firewall and properly forwarded if you want your node to accept incoming connections from the public network.
+If you want your own node to accept incoming public connections, make sure TCP port `17474` is allowed through your local firewall and any router or cloud firewall in front of the node.
 
-Peer discovery and public bootstrap infrastructure are still under development, so manual peer connections may currently be required.
+The public bootstrap node runs a lightweight Linux headless build of Bitcoin Origins and has been tested for blockchain synchronization, block relay, persistence, and automatic startup after reboot.
 
 ## Mining
 
@@ -92,8 +106,13 @@ When another node finds and propagates a new block, the miner detects that its c
 The following functionality has been tested between independent Bitcoin Origins nodes:
 
 * Direct P2P connection
+* Automatic connection to the public bootstrap node
+* Public Internet connectivity
 * Blockchain synchronization
 * Block propagation
+* Blockchain persistence after restart
+* Linux headless full-node operation
+* Automatic node startup as a system service
 * External CPU mining
 * Multi-threaded mining
 * Dual-CPU / multi-processor mining
