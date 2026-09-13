@@ -280,7 +280,7 @@ CNode* FindNode(unsigned int ip)
     CRITICAL_BLOCK(cs_vNodes)
     {
         foreach(CNode* pnode, vNodes)
-            if (pnode->addr.ip == ip)
+            if (!pnode->fDisconnect && pnode->addr.ip == ip)
                 return (pnode);
     }
     return NULL;
@@ -291,7 +291,7 @@ CNode* FindNode(CAddress addr)
     CRITICAL_BLOCK(cs_vNodes)
     {
         foreach(CNode* pnode, vNodes)
-            if (pnode->addr == addr)
+            if (!pnode->fDisconnect && pnode->addr == addr)
                 return (pnode);
     }
     return NULL;
